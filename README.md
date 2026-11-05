@@ -134,6 +134,42 @@ where the repository is. It does that through Rex itself: on the host, `rexmod s
 as a Rex client and answers the Mac's requests (`client.perform`), and it tells the panel the moment
 a repository it was asked about changes, so the panel refreshes then instead of polling.
 
+```mermaid
+flowchart LR
+  subgraph mac [Mac]
+    subgraph Rex.app
+      panel[Changes panel<br/>RexModPanel.dylib]
+    end
+    cli((rexmod))
+  end
+  subgraph host [Rex host, over Tailscale]
+    hrex[Rex server API]
+    serve((rexmod serve<br/>main · ui clients))
+    hcli((rexmod))
+    agent[Agent pane<br/>Claude Code · Codex · OpenCode · Pi]
+    editor[Editor pane<br/>Neovim + rexmod.nvim]
+    git[(.git/rexmod<br/>turns · comments)]
+    data[(Neovim data<br/>copy on a local disk)]
+  end
+
+  panel -- "state, open, send" --> cli
+  cli -- "client.perform<br/>+ Rex theme" --> hrex
+  hrex -- "refreshes: main<br/>open, pick: ui" --> serve
+  serve -- "runs" --> hcli
+  hrex -. "change events<br/>(remote-events)" .-> panel
+  cli -. "ssh fallback" .-> hcli
+  agent -- "hook prompt / stop" --> hcli
+  editor -- "comments" --> hcli
+  hcli -- "panes, splits, input" --> hrex
+  hcli --> git
+  hcli -- "--listen socket" --> editor
+  data --> editor
+```
+
+The Mac's `rexmod` only finds the host and asks: everything else is the host's own `rexmod`, as in
+[How it works](#how-it-works) for a local session. Keys pressed in a session there (`⌘P`, Ctrl+h/j/k/l)
+go to the host's Rex server too, which binds them from its own `init.lua`.
+
 The host (Linux, x86_64 or arm64) needs `git` and Rex's `rex` CLI, plus `fzf` for `⌘P`. From a
 rexmod checkout, set it up over ssh:
 
