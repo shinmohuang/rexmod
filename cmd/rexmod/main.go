@@ -35,6 +35,7 @@ const usage = `rexmod: Rex Changes panel, editor and review helpers
   rexmod follow   --session S --window W --block B     follow (and focus) another agent pane of the window
   rexmod hook prompt|stop [--text]                     agent turn hooks (JSON on stdin; --text: plain comments out)
   rexmod warm                                          cache the login environment for the editor pane
+  rexmod serve                                         on a remote Rex host: answer the Mac's rexmod over Rex
 
 A session on another Rex host (rex hosts) runs there over ssh: target, state, info, files, follow
 and comments send; see remote_hosts in ~/.config/rexmod/config.json.
@@ -83,6 +84,8 @@ func main() {
 		err = cmdEditorPane(os.Args[2:])
 	case "editor-daemon":
 		err = cmdEditorDaemon(os.Args[2:])
+	case "serve":
+		err = cmdServe(os.Args[2:])
 	case "warm":
 		// Refresh the cached login environment if it is stale.
 		_ = loginEnv()
