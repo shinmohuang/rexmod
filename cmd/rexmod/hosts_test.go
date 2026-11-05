@@ -34,7 +34,20 @@ func (f *fakeRex) call(args ...string) ([]byte, error) {
 	f.mu.Unlock()
 	host := ""
 	if len(args) > 1 && args[0] == "-S" {
-		host, args = args[1], args[4:] // -S label --timeout T
+		host, args = args[1], args[2:]
+		if len(args) > 1 && args[0] == "--timeout" {
+			args = args[2:]
+		}
+	}
+	// No rexmod service on any host, and none can be started: the Rex
+	// channel gives up and commands go over ssh (see remote_rex_test.go).
+	if host != "" {
+		switch {
+		case len(args) > 2 && args[0] == "api" && args[2] == "client.list":
+			return []byte(`{"clients":[]}`), nil
+		case args[0] == "new":
+			return nil, errors.New("rex new: not here")
+		}
 	}
 	switch {
 	case host == "" && args[0] == "api":

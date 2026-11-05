@@ -15,6 +15,9 @@ type Config struct {
 	// follows agents on, by host label. A host without an entry is reached
 	// over ssh at its label.
 	RemoteHosts map[string]RemoteHost `json:"remote_hosts,omitempty"`
+	// RemoteChannel "ssh" sends every remote command over ssh, skipping
+	// the Rex channel (rexmod serve): a switch for troubleshooting.
+	RemoteChannel string `json:"remote_channel,omitempty"`
 }
 
 // RemoteHost is how rexmod runs itself on a Rex host.

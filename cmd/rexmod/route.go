@@ -34,7 +34,7 @@ func routeRemote(cmd string, args []string) (handled bool, err error) {
 	if cmd == "open" || cmd == "pick" {
 		return true, fmt.Errorf("the editor isn't supported on Rex hosts yet (%s)", host)
 	}
-	out, err := runRemote(host, append([]string{cmd}, args...))
+	out, err := runOnHost(host, append([]string{cmd}, args...))
 	var re *remoteExit
 	if err != nil && cmd == "state" && !errors.As(err, &re) {
 		// As for a local session the panel can't follow: the reason goes in
