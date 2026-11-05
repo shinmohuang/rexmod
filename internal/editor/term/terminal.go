@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || linux
 
 package term
 
@@ -37,13 +37,13 @@ func ioctl(fd int, req uintptr, arg unsafe.Pointer) error {
 // GetTermios reads fd's terminal settings.
 func GetTermios(fd int) (syscall.Termios, error) {
 	var t syscall.Termios
-	err := ioctl(fd, syscall.TIOCGETA, unsafe.Pointer(&t))
+	err := ioctl(fd, ioctlGetTermios, unsafe.Pointer(&t))
 	return t, err
 }
 
 // SetTermios applies settings after draining output and flushing input (TCSAFLUSH).
 func SetTermios(fd int, t *syscall.Termios) error {
-	return ioctl(fd, syscall.TIOCSETAF, unsafe.Pointer(t))
+	return ioctl(fd, ioctlSetTermiosFlush, unsafe.Pointer(t))
 }
 
 // IsTerminal reports whether fd is a terminal.

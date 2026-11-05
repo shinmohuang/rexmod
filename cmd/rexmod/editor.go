@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || linux
 
 package main
 
@@ -131,7 +131,7 @@ func cmdEditorDaemon(args []string) error {
 		return err
 	}
 	if dn, err := os.OpenFile(os.DevNull, os.O_RDWR, 0); err == nil {
-		_ = syscall.Dup2(int(dn.Fd()), 1)
+		_ = dupTo(int(dn.Fd()), 1)
 		dn.Close()
 	}
 

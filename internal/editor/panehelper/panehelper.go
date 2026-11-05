@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || linux
 
 // Package panehelper is `pane SOCKET [ID]`: the helper each Rex pane runs.
 // It hands its terminal to the daemon, then waits. When the daemon hangs up
