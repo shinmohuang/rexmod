@@ -28,7 +28,7 @@ if [ -x "$PREFIX/scripts/install-hooks.sh" ]; then
   "$PREFIX/scripts/install-hooks.sh" --remove
 fi
 
-REXCFG="$HOME/.config/rex/init.lua"
+REXCFG="${REX_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/rex/init.lua}"
 if [ -f "$REXCFG" ]; then
   say "Removing the rexmod block from Rex's config"
   /usr/bin/python3 - "$REXCFG" <<'EOF'

@@ -83,7 +83,7 @@ rm -rf "$PREFIX/nvim" "$PREFIX/agents" "$PREFIX/skills"
 cp -R "$ROOT/nvim" "$PREFIX/nvim"
 cp -R "$ROOT/agents" "$PREFIX/agents"
 cp -R "$ROOT/skills" "$PREFIX/skills"
-for s in patch.sh unpatch.sh update.sh install-hooks.sh fetch-flow-icons.sh install-watcher.sh; do
+for s in patch.sh unpatch.sh update.sh install-hooks.sh fetch-flow-icons.sh install-watcher.sh rex-config.sh; do
   install -m 755 "$ROOT/scripts/$s" "$PREFIX/scripts/$s"
 done
 install -m 755 "$ROOT/uninstall.sh" "$PREFIX/scripts/uninstall.sh"
@@ -125,67 +125,8 @@ if [ -n "$BOOTSTRAP" ]; then
 fi
 
 # --- Rex config: ⌘P picker (and Ctrl+h/j/k/l pane moves) -------------------
-REXCFG="$HOME/.config/rex/init.lua"
-mkdir -p "$(dirname "$REXCFG")"
-touch "$REXCFG"
-BEGIN="-- >>> rexmod (managed by install.sh; edits inside are replaced)"
-END="-- <<< rexmod"
-/usr/bin/python3 - "$REXCFG" "$BEGIN" "$END" <<'EOF'
-import re, sys
-path, begin, end = sys.argv[1], sys.argv[2], sys.argv[3]
-text = open(path).read()
-text = re.sub(re.escape(begin) + r".*?" + re.escape(end) + r"\n?", "", text, flags=re.S)
-open(path, "w").write(text)
-EOF
-HAS_PANE_KEYS=0
-grep -q "focus_direction" "$REXCFG" && HAS_PANE_KEYS=1
-if ! grep -q 'pick.*--here' "$REXCFG"; then
-  {
-    printf '\n%s\n' "$BEGIN"
-    cat <<EOF
--- Cmd+P: fuzzy file picker over the repo this tab's Claude works in. The layer runs where the
--- session is: on a remote Rex host, rexmod is ~/.local/bin/rexmod (scripts/install-remote.sh).
-rex.bind("cmd+p", function(ctx)
-  rex.call("session.new_layer", {
-    session_id = ctx.session_id,
-    bounds = { 0.15, 0.1, 0.7, 0.75 },
-    focus = true,
-    layout = { block = { flavor = "com.superlogical.terminal.shell", label = "files", options = {
-      shell = "none",
-      command = { "/bin/sh", "-c", 'r="\$1"; [ -x "\$r" ] || r="\$HOME/.local/bin/rexmod"; exec "\$r" pick --here --session "\$2"',
-        "sh", "$PREFIX/bin/rexmod", ctx.session_id },
-    } } },
-  })
-  return true
-end)
-EOF
-    if [ "$HAS_PANE_KEYS" = 0 ]; then
-      cat <<'EOF'
-
--- Ctrl+h/j/k/l move between panes; inside Neovim they move between its
--- windows first (the editor config hands over at its edge).
-local function runs_vim(ctx)
-  local ok, process = pcall(rex.call, "block.method", { session_id = ctx.session_id, block_id = ctx.block_id, method = "process" })
-  local name = ok and process and process.foreground and process.foreground.name
-  return name == "nvim" or name == "vim"
-end
-for key, direction in pairs({ h = "left", j = "down", k = "up", l = "right" }) do
-  rex.bind("ctrl+" .. key, function(ctx)
-    if runs_vim(ctx) then
-      return false
-    end
-    rex.call("session.focus_direction", { session_id = ctx.session_id, direction = direction })
-    return true
-  end)
-end
-EOF
-    fi
-    printf '%s\n' "$END"
-  } >> "$REXCFG"
-  say "Added ⌘P to ~/.config/rex/init.lua"
-fi
 REX="$(command -v rex || echo "$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex")"
-[ -x "$REX" ] && "$REX" config reload >/dev/null 2>&1 || true
+"$PREFIX/scripts/rex-config.sh" "$PREFIX/bin/rexmod" "$REX"
 
 # --- agent hooks: Claude Code, Codex, OpenCode, Pi ------------------------------
 if [ "$HOOKS" = 1 ]; then

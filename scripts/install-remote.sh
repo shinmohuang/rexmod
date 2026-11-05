@@ -14,6 +14,8 @@
 #   the editor config                as install.sh does: ~/.config/nvim when there's none, the
 #                                    rexmod plugin spec in a lazy.nvim config, otherwise
 #                                    ~/.config/rexmod-nvim (nvim_appname in ~/.config/rexmod)
+#   ⌘P and Ctrl+h/j/k/l              scripts/rex-config.sh: keys in a session there go to that
+#                                    host's Rex server, which reads its own init.lua
 #   agent hooks                      scripts/install-hooks.sh (Last Turn, comment delivery)
 #
 # Safe to run again: it updates what it installed and leaves your own config alone.
@@ -61,7 +63,7 @@ VERSION="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo d
   -ldflags "-s -w" -o "$STAGE/rexmod" .)
 cp -R "$ROOT/nvim" "$ROOT/agents" "$ROOT/skills" "$STAGE/"
 mkdir -p "$STAGE/scripts" "$STAGE/editor"
-cp "$ROOT/scripts/install-hooks.sh" "$STAGE/scripts/"
+cp "$ROOT/scripts/install-hooks.sh" "$ROOT/scripts/rex-config.sh" "$STAGE/scripts/"
 cp -R "$ROOT/editor/nvim" "$STAGE/editor/nvim"
 echo "$VERSION" > "$STAGE/VERSION"
 
@@ -181,6 +183,13 @@ if [ -n "$COPY_ROOT" ] && [ -d "$COPY_ROOT/data" ]; then
   say "Dropping the local copy of the editor's data in $COPY_ROOT (the next open makes a new one)"
   rm -rf "$COPY_ROOT/data" "$COPY_ROOT/cache" "$COPY_ROOT/.copy.failed"
 fi
+
+# Keys in a session on this host go to its Rex server and its own init.lua:
+# the picker and pane keys go there too. Where Rex looks for it as the login
+# shell (which starts the server) sees it.
+REXCFG="$("${SHELL:-/bin/sh}" -l -c 'printf %s "${REX_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/rex/init.lua}"' 2>/dev/null </dev/null || true)"
+case "$REXCFG" in /*) ;; *) REXCFG="$HOME/.config/rex/init.lua" ;; esac
+REX_CONFIG="$REXCFG" "$PREFIX/scripts/rex-config.sh" "$BIN/rexmod" "$(command -v rex || true)"
 
 if [ "$WANT_HOOKS" = 1 ]; then
   say "Hooking into the coding agents here (Last Turn, comment delivery)"
