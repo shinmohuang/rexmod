@@ -74,6 +74,7 @@ type (
 	evSignal      struct{}
 	evFocusTimer  struct{}
 	evLayoutTimer struct{}
+	evPreview     struct{}
 )
 
 // Daemon is the running editor.
@@ -81,6 +82,9 @@ type Daemon struct {
 	Exe, Sock string // for new panes' command
 	// Extra args to every new pane's command, after Exe.
 	PaneArgs []string
+	// Preview is shown in the startup pane if Neovim hasn't drawn it
+	// PreviewDelay after the start; nil for none.
+	Preview *Preview
 
 	events  chan event
 	grids   *screen.Grids
@@ -157,6 +161,15 @@ func (d *Daemon) Run(launch panehelper.Hello, block string, l *net.UnixListener,
 			d.send(evSignal{})
 		}
 	}()
+	if d.Preview != nil {
+		t := time.AfterFunc(PreviewDelay, func() {
+			select {
+			case d.events <- evPreview{}:
+			default: // busy: Neovim is drawing anyway
+			}
+		})
+		defer t.Stop()
+	}
 
 	v := s.view
 	if err := d.nv.c.UIAttach(max(v.Cols, 1), max(v.Rows, 1), nvim.UIOptions{ExtTermcolors: true, ExtMultigrid: true, StdoutTTY: true}); err != nil {
@@ -191,6 +204,28 @@ func (d *Daemon) Run(launch panehelper.Hello, block string, l *net.UnixListener,
 		}
 	}
 	return d.stopped, nil
+}
+
+// previewDue: the startup pane is there and Neovim hasn't drawn in it.
+func previewDue(p *Pane) bool { return p != nil && p.surface != nil && !p.framed }
+
+// showPreview draws the preview in the startup pane, unless Neovim has
+// drawn there already.
+func (d *Daemon) showPreview() error {
+	p := d.panes.byID(startupPaneID)
+	if !previewDue(p) {
+		return nil
+	}
+	s := p.surface
+	b := d.Preview.Render(int(s.view.Cols), int(s.view.Rows))
+	if b == nil {
+		return nil
+	}
+	if _, err := s.term.Write(b); err != nil {
+		return err
+	}
+	p.previewing = true
+	return s.term.Flush()
 }
 
 func (d *Daemon) shutdown() {
@@ -239,6 +274,8 @@ func (d *Daemon) handle(e event) error {
 	switch e := e.(type) {
 	case evSignal:
 		d.stop(Signal)
+	case evPreview:
+		return d.showPreview()
 	case evNvim:
 		return d.onNvim(e.data)
 	case evNvimEOF:
@@ -1167,6 +1204,11 @@ func (d *Daemon) draw() {
 		if s == nil || (p.layer != nil && !p.layerShown()) {
 			continue
 		}
+		// No window of Neovim's in it yet: its frame would be a blank one,
+		// which would wipe the preview; the first real frame draws it all.
+		if p.previewing && p.layer == nil && d.gridOfPane(p) == 0 {
+			continue
+		}
 		var drawn bool
 		var err error
 		if p.layer != nil {
@@ -1190,6 +1232,9 @@ func (d *Daemon) draw() {
 		s.fwd.SetTargets(ts)
 		if err == nil && drawn {
 			err = s.term.Flush()
+			if err == nil && (p.layer != nil || d.gridOfPane(p) != 0) {
+				p.framed, p.previewing = true, false
+			}
 		}
 		if err != nil {
 			_ = d.paneGone(p)

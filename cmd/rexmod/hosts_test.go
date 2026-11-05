@@ -186,20 +186,22 @@ func TestSessionHostCache(t *testing.T) {
 	if h, _ := sessionHost("paper"); h != "gpu3" {
 		t.Fatalf("first lookup: %q", h)
 	}
-	// Hit: one check with that host, no scan.
+	// Hit: trusted as it is, no question to any host.
 	f.calls = nil
 	if h, _ := sessionHost("paper"); h != "gpu3" {
 		t.Errorf("cached lookup: %q", h)
 	}
-	for _, c := range f.calls {
-		if strings.HasPrefix(c, "hosts ") || strings.Contains(c, " ls ") {
-			t.Errorf("cache hit still scanned: %s", c)
-		}
+	if n := f.remoteCalls(); n != 0 {
+		t.Errorf("cache hit asked Rex hosts %d times: %v", n, f.calls)
 	}
-	// Stale: the session moved to gpu2; the check fails and a scan finds it.
+	// Stale: the session moved to gpu2. sessionHost still says gpu3 (the
+	// command run there finds out); a rescan finds gpu2.
 	f.onHost["H3"] = nil
 	f.onHost["H2"] = append(f.onHost["H2"], "session:c=paper")
-	if h, _ := sessionHost("paper"); h != "gpu2" {
+	if h, _ := sessionHost("paper"); h != "gpu3" {
+		t.Errorf("stale cache: %q, want gpu3 as remembered", h)
+	}
+	if h, _ := rescanSessionHost("paper"); h != "gpu2" {
 		t.Errorf("after a move: %q, want gpu2", h)
 	}
 	if m := loadSessionHosts(); m["paper"] != "gpu2" {

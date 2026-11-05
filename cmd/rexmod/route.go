@@ -19,8 +19,9 @@ func routeRemote(cmd string, args []string) (handled bool, err error) {
 		return false, nil
 	}
 	args, host := takeFlag(args, "host")
+	session := ""
 	if host == "" {
-		session := flagValue(args, "session")
+		session = flagValue(args, "session")
 		if session == "" {
 			session = os.Getenv("REX_SESSION")
 		}
@@ -32,9 +33,23 @@ func routeRemote(cmd string, args []string) (handled bool, err error) {
 		}
 	}
 	if cmd == "open" || cmd == "pick" {
-		return true, fmt.Errorf("the editor isn't supported on Rex hosts yet (%s)", host)
+		// The editor runs on the host, its colors from the Mac's Rex.
+		if theme := rexThemeArg(); theme != "" {
+			args = append(args, "--rex-theme", theme)
+		}
 	}
-	out, err := runOnHost(host, append([]string{cmd}, args...))
+	out, err := runHost(host, append([]string{cmd}, args...))
+	if session != "" && sessionMissing(session, out, err) {
+		// The remembered host no longer has it (sessionHost doesn't ask):
+		// look again, and run there, or here, once.
+		if host, err = rescanSessionHost(session); err != nil {
+			return true, err
+		}
+		if host == "" {
+			return false, nil
+		}
+		out, err = runHost(host, append([]string{cmd}, args...))
+	}
 	var re *remoteExit
 	if err != nil && cmd == "state" && !errors.As(err, &re) {
 		// As for a local session the panel can't follow: the reason goes in
@@ -57,15 +72,53 @@ func routeRemote(cmd string, args []string) (handled bool, err error) {
 	return true, err
 }
 
+// runHost runs a command on a Rex host; tests stand in for it.
+var runHost = runOnHost
+
+// sessionMissing says whether a remote rexmod failed because its Rex server
+// has no such session: in its stderr, or in the state's error.
+func sessionMissing(session string, out []byte, err error) bool {
+	msg := fmt.Sprintf("session target %q not found", session)
+	var re *remoteExit
+	if errors.As(err, &re) && strings.Contains(re.Stderr, msg) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	var st struct {
+		Target *json.RawMessage `json:"target"`
+		Error  string           `json:"error"`
+	}
+	return json.Unmarshal(out, &st) == nil && st.Target == nil && strings.Contains(st.Error, msg)
+}
+
 // routable says whether a command acts on a session's repository or panes
 // and so must run where the session is. Hooks, the editor's own commands
 // and comments the editor adds run where they're started: already there.
 func routable(cmd string, args []string) bool {
 	switch cmd {
-	case "target", "state", "info", "follow", "files", "open", "pick":
+	case "target", "state", "info", "follow", "files", "open":
 		return true
+	case "pick":
+		// --inner and --here run the picker in the pane they're started in
+		return !hasFlag(args, "inner") && !hasFlag(args, "here")
 	case "comments":
 		return len(args) > 0 && args[0] == "send"
+	}
+	return false
+}
+
+// hasFlag says whether args hold the boolean flag --name or -name.
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		k := strings.TrimLeft(a, "-")
+		if strings.HasPrefix(a, "-") && (k == name || strings.HasPrefix(k, name+"=")) {
+			return true
+		}
 	}
 	return false
 }

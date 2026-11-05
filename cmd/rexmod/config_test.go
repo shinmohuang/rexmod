@@ -25,3 +25,17 @@ func TestRemoteHostConfig(t *testing.T) {
 		t.Errorf("broken config: dest %q, want the label", d)
 	}
 }
+
+func TestParseConfigEditor(t *testing.T) {
+	for in, want := range map[string]Config{
+		`{}`:                                {},
+		`{"editor_data_dir":"/scratch/me"}`: {EditorDataDir: "/scratch/me"},
+		`{"editor_data_dir":"off"}`:         {EditorDataDir: "off"},
+		`{"editor_prewarm":"on","nvim_appname":"x"}`: {EditorPrewarm: "on", NvimAppName: "x"},
+	} {
+		got := parseConfig([]byte(in))
+		if got.EditorDataDir != want.EditorDataDir || got.EditorPrewarm != want.EditorPrewarm || got.NvimAppName != want.NvimAppName {
+			t.Errorf("%s: %+v", in, got)
+		}
+	}
+}

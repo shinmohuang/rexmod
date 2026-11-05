@@ -37,8 +37,9 @@ const usage = `rexmod: Rex Changes panel, editor and review helpers
   rexmod warm                                          cache the login environment for the editor pane
   rexmod serve                                         on a remote Rex host: answer the Mac's rexmod over Rex
 
-A session on another Rex host (rex hosts) runs there over ssh: target, state, info, files, follow
-and comments send; see remote_hosts in ~/.config/rexmod/config.json.
+A session on another Rex host (rex hosts) runs there, through its rexmod serve or over ssh: target,
+state, info, files, follow, open, pick and comments send; see scripts/install-remote.sh and
+remote_hosts in ~/.config/rexmod/config.json.
 `
 
 func main() {
@@ -84,6 +85,8 @@ func main() {
 		err = cmdEditorPane(os.Args[2:])
 	case "editor-daemon":
 		err = cmdEditorDaemon(os.Args[2:])
+	case "editor-data-copy":
+		err = cmdEditorDataCopy(os.Args[2:])
 	case "serve":
 		err = cmdServe(os.Args[2:])
 	case "remote-events":
@@ -292,7 +295,9 @@ func cmdOpen(args []string) error {
 	fs := flag.NewFlagSet("open", flag.ExitOnError)
 	s, w := targetFlags(fs)
 	line := fs.Int("line", 0, "line to jump to")
+	theme := fs.String("rex-theme", "", "Rex's theme from the Mac (on a remote host)")
 	pos := parse(fs, args)
+	saveRexTheme(*theme)
 	if len(pos) == 0 {
 		return fmt.Errorf("open: missing file")
 	}
@@ -309,7 +314,9 @@ func cmdPick(args []string) error {
 	inner := fs.Bool("inner", false, "run fzf here (used inside the floating layer)")
 	here := fs.Bool("here", false, "resolve the agent pane's repo, then run fzf in this terminal")
 	repo := fs.String("repo", "", "repository for --inner")
+	theme := fs.String("rex-theme", "", "Rex's theme from the Mac (on a remote host)")
 	parse(fs, args)
+	saveRexTheme(*theme)
 	if *here {
 		t, err := resolveTarget(*s, *w)
 		if err != nil {

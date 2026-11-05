@@ -18,6 +18,15 @@ type Config struct {
 	// RemoteChannel "ssh" sends every remote command over ssh, skipping
 	// the Rex channel (rexmod serve): a switch for troubleshooting.
 	RemoteChannel string `json:"remote_channel,omitempty"`
+	// EditorDataDir is where the editor's Neovim keeps a copy of its data
+	// (plugins, language servers) and its cache when they're on a network
+	// filesystem: unset for the default (/var/tmp/rexmod-UID), a path, or
+	// "off" to leave them where they are.
+	EditorDataDir string `json:"editor_data_dir,omitempty"`
+	// EditorPrewarm "on" or "off" overrides when rexmod serve loads the
+	// editor once ahead of time; unset, it does when the editor's data is
+	// on a network filesystem.
+	EditorPrewarm string `json:"editor_prewarm,omitempty"`
 }
 
 // RemoteHost is how rexmod runs itself on a Rex host.

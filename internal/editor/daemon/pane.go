@@ -116,15 +116,17 @@ type Layer struct {
 
 // Pane links a Rex pane to a Neovim window; the parts arrive in any order.
 type Pane struct {
-	id       uint32 // 0 is the startup pane
-	block    string
-	win      int64 // 0 while a replacement window opens
-	surface  *Surface
-	closing  closeReason
-	layer    *Layer
-	rect     *[4]float64 // where Rex put it: x, y, w, h
-	awaiting bool        // a new split at Rex's default size until the first resize
-	lastAsk  struct{ grid, cols, rows uint32 }
+	id         uint32 // 0 is the startup pane
+	block      string
+	win        int64 // 0 while a replacement window opens
+	surface    *Surface
+	closing    closeReason
+	layer      *Layer
+	rect       *[4]float64 // where Rex put it: x, y, w, h
+	awaiting   bool        // a new split at Rex's default size until the first resize
+	framed     bool        // Neovim has drawn a window of its in it
+	previewing bool        // the preview is up, until then
+	lastAsk    struct{ grid, cols, rows uint32 }
 }
 
 func (p *Pane) layerShown() bool {

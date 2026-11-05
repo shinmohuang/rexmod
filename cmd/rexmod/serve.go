@@ -33,7 +33,12 @@ var serveRunTimeout = 20 * time.Second
 const (
 	serveAction = "rexmod.run"
 	serveLabel  = "rexmod-serve"
-	serveProto  = 1
+	// serveUILabel is the service's second client, for what a person starts
+	// (open, pick, follow, comments send): Rex hands a client one request at
+	// a time, so on the main one an open would wait out the panel's state.
+	// Not "rexmod-serve#…": nothing takes it for another service.
+	serveUILabel = "rexmod-serve-ui"
+	serveProto   = 1
 	// Room for the reply envelope (call_id, result keys) under the limit.
 	serveEnvelope = 4096
 )
@@ -64,7 +69,8 @@ type server struct {
 	seq      int    // label generation; each bump is an event
 	run      func(argv []string) (stdout, stderr string, code int, err error)
 	watch    *repoWatch
-	exe      string // our binary, to notice an upgrade
+	prewarm  *prewarmer // nil: none
+	exe      string     // our binary, to notice an upgrade
 	exeMtime time.Time
 	session  string // our pane's session and block, when started in one
 	block    string
@@ -95,6 +101,7 @@ func cmdServe(args []string) error {
 	exe, _ := os.Executable()
 	s := &server{rex: k, events: k.Events, done: k.Done(), maxMsg: c.MaxMessage, run: runSelf(exe), exe: exe}
 	s.watch = newRepoWatch(s.bump)
+	s.prewarm = newPrewarmer()
 	if st, err := os.Stat(exe); err == nil {
 		s.exeMtime = st.ModTime()
 	}
@@ -107,6 +114,16 @@ func cmdServe(args []string) error {
 	}
 	s.session, s.block = os.Getenv("REX_SESSION"), os.Getenv("REX_BLOCK")
 	s.detachSelf(s.session, s.block)
+	// the interactive client; without it, the Mac sends everything to the main one
+	if c2, err := rex.Connect(srv); err != nil {
+		fmt.Fprintln(os.Stderr, "rexmod serve: interactive client:", err)
+	} else {
+		defer c2.Close()
+		k2 := rex.NewCaller(c2)
+		if err := s.serveUI(k2, k2.Events); err != nil {
+			fmt.Fprintln(os.Stderr, "rexmod serve: interactive client:", err)
+		}
+	}
 	s.sweep()
 	err = s.loop()
 	if err == errUpgraded {
@@ -114,6 +131,33 @@ func cmdServe(args []string) error {
 		return nil
 	}
 	return err
+}
+
+// uiRex is what the interactive client needs of its connection.
+type uiRex interface {
+	replier
+	SetLabel(label string) error
+	DeclareActions(actions ...rex.Action) error
+}
+
+// serveUI makes k the interactive client: it declares rexmod.run, then
+// takes its label (so the Mac finds it only once it answers), and answers
+// its requests in a goroutine of their own, beside the main client's.
+func (s *server) serveUI(k uiRex, events <-chan *rex.Event) error {
+	if err := k.DeclareActions(rex.Action{Name: serveAction, Title: "rexmod"}); err != nil {
+		return err
+	}
+	if err := k.SetLabel(serveUILabel); err != nil {
+		return err
+	}
+	go func() {
+		for e := range events {
+			if r, ok := rex.ParsePerform(e); ok {
+				s.handleOn(k, r)
+			}
+		}
+	}()
+	return nil
 }
 
 // detachSelf takes the service's pane out of its window when it runs in
@@ -253,27 +297,40 @@ func (s *server) upgraded() bool {
 }
 
 // serveAllowed says whether argv is a command the service runs: those that
-// read the repository or act on Rex panes, never hooks or the editor.
+// read the repository or act on Rex panes (open and pick start the editor
+// or the picker in one), never hooks or the editor's own commands.
 func serveAllowed(argv []string) bool {
 	if len(argv) == 0 {
 		return false
 	}
 	switch argv[0] {
-	case "target", "state", "info", "files", "follow":
+	case "target", "state", "info", "files", "follow", "open":
 		return true
+	case "pick":
+		// the picker's layer, not the picker itself, which needs a terminal
+		return !hasFlag(argv[1:], "inner") && !hasFlag(argv[1:], "here")
 	case "comments":
 		return len(argv) > 1 && argv[1] == "send"
 	}
 	return false
 }
 
-func (s *server) handle(r rex.PerformRequest) {
+func (s *server) handle(r rex.PerformRequest) { s.handleOn(s.rex, r) }
+
+// replier answers perform requests: the main client, or the interactive one.
+type replier interface {
+	Reply(callID string, result any) error
+	ReplyError(callID, code, message string) error
+}
+
+// handleOn answers r on the connection it came in on.
+func (s *server) handleOn(on replier, r rex.PerformRequest) {
 	if r.Action != serveAction {
-		_ = s.rex.ReplyError(r.CallID, "not_supported", "rexmod serve has no action "+r.Action)
+		_ = on.ReplyError(r.CallID, "not_supported", "rexmod serve has no action "+r.Action)
 		return
 	}
 	if p, _ := rex.GetInt(r.Args, "proto"); p != serveProto {
-		_ = s.rex.ReplyError(r.CallID, "not_supported", fmt.Sprintf("rexmod serve speaks proto %d, not %d", serveProto, p))
+		_ = on.ReplyError(r.CallID, "not_supported", fmt.Sprintf("rexmod serve speaks proto %d, not %d", serveProto, p))
 		return
 	}
 	raw, _ := rex.Get(r.Args, "argv").([]any)
@@ -281,27 +338,27 @@ func (s *server) handle(r rex.PerformRequest) {
 	for _, a := range raw {
 		str, ok := rex.Str(a)
 		if !ok {
-			_ = s.rex.ReplyError(r.CallID, "refused", "argv must be strings")
+			_ = on.ReplyError(r.CallID, "refused", "argv must be strings")
 			return
 		}
 		argv = append(argv, str)
 	}
 	if !serveAllowed(argv) {
-		_ = s.rex.ReplyError(r.CallID, "refused", fmt.Sprintf("rexmod serve doesn't run %q", strings.Join(argv, " ")))
+		_ = on.ReplyError(r.CallID, "refused", fmt.Sprintf("rexmod serve doesn't run %q", strings.Join(argv, " ")))
 		return
 	}
 	stdout, stderr, code, err := s.run(argv)
 	if err != nil {
-		_ = s.rex.ReplyError(r.CallID, "internal", err.Error())
+		_ = on.ReplyError(r.CallID, "internal", err.Error())
 		return
 	}
 	s.track(argv, stdout)
 	reply := serveReply{Proto: serveProto, Version: rexmodVersion(), Stdout: stdout, Stderr: stderr, Code: code}
 	if b, _ := json.Marshal(reply); s.maxMsg > 0 && len(b) > s.maxMsg-serveEnvelope {
-		_ = s.rex.ReplyError(r.CallID, "internal", fmt.Sprintf("too_large: %d bytes, over Rex's %d", len(b), s.maxMsg))
+		_ = on.ReplyError(r.CallID, "internal", fmt.Sprintf("too_large: %d bytes, over Rex's %d", len(b), s.maxMsg))
 		return
 	}
-	_ = s.rex.Reply(r.CallID, reply)
+	_ = on.Reply(r.CallID, reply)
 }
 
 // track watches the repository a request was about: state names it in its
@@ -327,6 +384,9 @@ func (s *server) track(argv []string, stdout string) {
 	}
 	if repo != "" {
 		s.watch.track(repo, time.Now())
+		if s.prewarm != nil {
+			s.prewarm.asked(repo, time.Now())
+		}
 	}
 }
 

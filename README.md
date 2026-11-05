@@ -134,19 +134,26 @@ where the repository is. It does that through Rex itself: on the host, `rexmod s
 as a Rex client and answers the Mac's requests (`client.perform`), and it tells the panel the moment
 a repository it was asked about changes, so the panel refreshes then instead of polling.
 
-The host needs `rexmod`, `git` and Rex's `rex` CLI. Until there's an installer, build and copy
-`rexmod` yourself:
+The host (Linux, x86_64 or arm64) needs `git` and Rex's `rex` CLI, plus `fzf` for `⌘P`. From a
+rexmod checkout, set it up over ssh:
 
 ```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/rexmod-linux-amd64 ./cmd/rexmod
-scp build/rexmod-linux-amd64 my-gpu-box:.local/bin/rexmod
+scripts/install-remote.sh my-gpu-box          # --no-hooks, --no-nvim to skip those
 ```
+
+That builds `rexmod` for the host into `~/.local/bin/rexmod`, puts the editor plugin under
+`~/.local/share/rexmod`, installs Neovim there unless the host has 0.11.2 or newer, sets up the editor
+config the way the Mac installer does, and hooks the host's agents in for Last Turn. Run it again
+to update.
 
 That's all: the first time the panel follows a session there, rexmod starts `rexmod serve` through
 Rex, in a session called `rexmod` that has no window. Copy a new `rexmod` over it and the running
 service exits within seconds; the next request starts the new one. The service runs only the
-commands the panel needs (`target`, `state`, `info`, `files`, `follow`, `comments send`), for
-whoever the host's Rex server lets in, which by default is only you.
+commands the panel needs (`target`, `state`, `info`, `files`, `follow`, `open`, `pick`,
+`comments send`), for whoever the host's Rex server lets in, which by default is only you. It is two
+Rex clients: Rex hands a client one request at a time, so what you start (opening a file, the picker,
+following an agent, sending comments) goes to a second one and never waits behind the panel's
+refreshes.
 
 If the service can't be used (an older `rexmod` there, a result over Rex's 1 MB message limit, Rex
 trouble), rexmod falls back to ssh, which needs a login that doesn't prompt (a key). Say which ssh
@@ -158,8 +165,25 @@ and always uses ssh, for troubleshooting:
 { "remote_hosts": { "gpu2": { "ssh": "my-gpu-box" } }, "remote_channel": "ssh" }
 ```
 
-The editor and `⌘P` aren't supported on remote hosts yet; Last Turn needs `rexmod hook prompt` /
-`stop` in the host's agent hooks.
+The editor runs on the host too: a file opened from the panel (or by the agent, `rexmod open`) opens
+in a Neovim there, in an editor pane beside the agent, and `⌘P` runs the picker there. Its colors are
+the Mac's Rex theme, handed over whenever the Mac opens a file or the picker there (kept in
+`~/.cache/rexmod/rex-theme.json` on the host). `Space u o` opens files with the host's opener, not
+the Mac's. A `⌘P` binding from an install before this needs `./install.sh` again to reach hosts.
+
+When Neovim's data (plugins, language servers) is on a network filesystem, as a shared home on a
+cluster often is, rexmod runs the editor from a copy of it on a local disk, made in the background
+the first time (until then the editor starts from your home). The copy is the host's own from then
+on: plugins you update in the editor change the copy, not your home, and running
+`scripts/install-remote.sh` again drops it so the next open copies your home afresh. In the host's
+`~/.config/rexmod/config.json`, `editor_data_dir` moves the copy (default `/var/tmp/rexmod-UID`) or,
+set to `"off"`, keeps the editor on your home; `editor_prewarm` (`"on"` or `"off"`) overrides when
+`rexmod serve` loads the editor once ahead of time, which by default it does only when the editor's
+data is on a network filesystem:
+
+```json
+{ "editor_data_dir": "/scratch/me/rexmod", "editor_prewarm": "off" }
+```
 
 ## How it works
 

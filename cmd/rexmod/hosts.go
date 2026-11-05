@@ -31,10 +31,24 @@ func sessionHost(session string) (string, error) {
 	}
 	cache := loadSessionHosts()
 	if h, ok := cache[session]; ok {
-		if _, err := rexCall("-S", h, "--timeout", hostTimeout, "api", "call", "-s", session, "session.view"); err == nil {
-			return h, nil
-		}
+		// Trusted without asking: a session that moved is caught where the
+		// command runs (routeRemote looks again then), which saves a round
+		// trip to the host on every call.
+		return h, nil
 	}
+	return scanSessionHost(session, cache)
+}
+
+// rescanSessionHost forgets where session was and looks for it again.
+func rescanSessionHost(session string) (string, error) {
+	cache := loadSessionHosts()
+	delete(cache, session)
+	saveSessionHosts(cache)
+	return scanSessionHost(session, cache)
+}
+
+// scanSessionHost asks every Rex host for session and remembers the answer.
+func scanSessionHost(session string, cache map[string]string) (string, error) {
 	h, err := findSessionHost(session)
 	if err != nil {
 		return "", err

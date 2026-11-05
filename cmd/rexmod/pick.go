@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -61,6 +62,13 @@ func pickOuter(session, window string) error {
 // rexBackground returns the appearance Rex draws in, "dark" or "light". Rex
 // doesn't answer the terminal's color queries, so read its setting.
 func rexBackground() string {
+	if runtime.GOOS != "darwin" {
+		// a remote host: the appearance the Mac handed over
+		if a := savedAppearance(); a == "dark" || a == "light" {
+			return a
+		}
+		return "dark"
+	}
 	out, _ := exec.Command("defaults", "read", "com.superlogical.rex", "Workspace.appearance").Output()
 	if a := strings.TrimSpace(string(out)); a == "dark" || a == "light" {
 		return a
@@ -81,10 +89,25 @@ func fzfColors(background string) string {
 }
 
 func fzfBin() string {
-	if p, err := exec.LookPath("fzf"); err == nil {
+	return toolBin("fzf")
+}
+
+// toolBin finds a tool on PATH or where it's usually installed: Homebrew,
+// or ~/.local/bin on a remote host (whose Rex panes may not have it on PATH).
+func toolBin(name string) string {
+	if p, err := exec.LookPath(name); err == nil {
 		return p
 	}
-	return "/opt/homebrew/bin/fzf"
+	cands := []string{"/opt/homebrew/bin/" + name, "/usr/local/bin/" + name}
+	if home, err := os.UserHomeDir(); err == nil {
+		cands = append(cands, filepath.Join(home, ".local", "bin", name))
+	}
+	for _, p := range cands {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return name
 }
 
 // pickInner runs fzf over the repo's files and opens the choice in the editor.
@@ -130,6 +153,9 @@ func previewScript() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		cands = append(cands, filepath.Join(home, "Library", "Application Support", "rexmod", "nvim", "preview.lua"))
 	}
+	if runtime.GOOS != "darwin" {
+		cands = append(cands, filepath.Join(rexmodDataDir(), "nvim", "preview.lua")) // a remote host
+	}
 	for _, c := range cands {
 		if _, err := os.Stat(c); err == nil {
 			return c
@@ -143,7 +169,7 @@ func previewScript() string {
 func preview(path string, focus int) error {
 	if script := previewScript(); script != "" {
 		cmd := exec.Command(nvimBin(), "--headless", "-u", "NONE", "-i", "NONE", "-l", script, path, fmt.Sprint(focus), "400")
-		cmd.Env = append(os.Environ(), "NVIM_LOG_FILE=/dev/null", "REXMOD_BACKGROUND="+rexBackground())
+		cmd.Env = append(os.Environ(), "NVIM_LOG_FILE=/dev/null", "REXMOD_BACKGROUND="+rexBackground(), "REXMOD_REX_THEME="+rexThemePath())
 		for k, v := range nvimEnv() {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}

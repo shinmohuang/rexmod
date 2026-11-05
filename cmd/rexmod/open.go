@@ -5,15 +5,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
+// cacheDir is rexmod's cache: REXMOD_CACHE_DIR when the editor's
+// environment pins it (its XDG_CACHE_HOME may point elsewhere), otherwise
+// rexmod/ in the user's cache directory.
 func cacheDir() string {
-	d, err := os.UserCacheDir()
-	if err != nil {
-		d = os.TempDir()
+	d := os.Getenv("REXMOD_CACHE_DIR")
+	if !filepath.IsAbs(d) {
+		base, err := os.UserCacheDir()
+		if err != nil {
+			base = os.TempDir()
+		}
+		d = filepath.Join(base, "rexmod")
 	}
-	d = filepath.Join(d, "rexmod")
 	_ = os.MkdirAll(d, 0o755)
 	return d
 }
@@ -29,24 +36,49 @@ func shortID(id string) string {
 	return id
 }
 
+// rexmodDataDir is rexmod's own data directory on a host without the Mac
+// install (a remote Rex host): REXMOD_DATA_DIR when the editor's
+// environment pins it (its XDG_DATA_HOME may point elsewhere), otherwise
+// $XDG_DATA_HOME/rexmod, ~/.local/share/rexmod by default.
+func rexmodDataDir() string {
+	if d := os.Getenv("REXMOD_DATA_DIR"); filepath.IsAbs(d) {
+		return d
+	}
+	if d := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(d) {
+		return filepath.Join(d, "rexmod")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "rexmod")
+}
+
 // editorSocket is the Neovim server address for the editor pane of a window.
 func editorSocket(windowID string) string {
-	return filepath.Join(cacheDir(), "nvim-"+shortID(windowID)+".sock")
+	return filepath.Join(socketDir(), "nvim-"+shortID(windowID)+".sock")
+}
+
+// socketDir holds the editor's sockets: $XDG_RUNTIME_DIR/rexmod, beside
+// Rex's own $XDG_RUNTIME_DIR/rex, where there is one (Linux); the cache
+// directory otherwise (macOS), which may be a network share elsewhere.
+// Rex starts every process that asks (the service, the editor's panes), so
+// they all see the same XDG_RUNTIME_DIR.
+func socketDir() string {
+	rt := os.Getenv("XDG_RUNTIME_DIR")
+	if runtime.GOOS == "darwin" || rt == "" || !filepath.IsAbs(rt) {
+		return cacheDir()
+	}
+	d := filepath.Join(rt, "rexmod")
+	if os.MkdirAll(d, 0o700) != nil {
+		return cacheDir()
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() || !ownedByMe(fi) {
+		return cacheDir()
+	}
+	return d
 }
 
 func vimStr(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-func nvimBin() string {
-	if p, err := exec.LookPath("nvim"); err == nil {
-		return p
-	}
-	for _, p := range []string{"/opt/homebrew/bin/nvim", "/usr/local/bin/nvim"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return "nvim"
-}
+func nvimBin() string { return toolBin("nvim") }
 
 func nvimAlive(sock string) bool {
 	if _, err := os.Stat(sock); err != nil {
@@ -112,6 +144,18 @@ func openInEditor(session, window, file string, line int) error {
 	extra["REXMOD_EDITOR"] = "1"
 	extra["REXMOD_SESSION"] = t.SessionID
 	extra["REXMOD_WINDOW"] = t.WindowID
+	if runtime.GOOS != "darwin" {
+		// Rex's theme as the Mac handed it over (rex_theme.lua)
+		extra["REXMOD_REX_THEME"] = rexThemePath()
+	}
+	// Its data on a local disk when it's on a network filesystem.
+	paneEnv := loginEnv()
+	for k, v := range extra {
+		paneEnv[k] = v
+	}
+	for k, v := range editorDataEnv(paneEnv, loadConfig()) {
+		extra[k] = v
+	}
 	env := envArgs(extra)
 	args = append(args, "--", "/usr/bin/env")
 	args = append(args, env...)

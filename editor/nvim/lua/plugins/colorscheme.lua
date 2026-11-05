@@ -8,11 +8,18 @@ local function follow(system)
   end
 end
 
+-- On a remote Rex host the appearance comes with the theme the Mac handed over; there is no
+-- system appearance to follow.
+if vim.fn.has("mac") == 0 then
+  follow("dark")
+end
+
 return {
   { "nvim-mini/mini.base16", lazy = true },
   {
     -- Rex does not answer the OSC 11 background query, so nvim cannot detect the appearance itself.
     "f-person/auto-dark-mode.nvim",
+    cond = vim.fn.has("mac") == 1,
     lazy = false,
     opts = {
       set_dark_mode = function()

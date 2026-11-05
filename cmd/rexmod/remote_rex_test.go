@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -21,8 +22,10 @@ type fakeServeHost struct {
 	calls     []string
 	killed    []string
 	started   int
-	paneEnded bool   // the started pane's program exited (no serve)
-	lostID    string // a service that ended, still listed as lost
+	paneEnded bool     // the started pane's program exited (no serve)
+	lostID    string   // a service that ended, still listed as lost
+	uiID      string   // the service's interactive client; "" for an older service
+	served    []string // client that ran each perform, in order
 }
 
 func (f *fakeServeHost) call(args ...string) ([]byte, error) {
@@ -45,6 +48,9 @@ func (f *fakeServeHost) call(args ...string) ([]byte, error) {
 		if f.serviceID != "" {
 			cs += `,{"client_id":"` + f.serviceID + `","info":{"name":"rexmod","label":"rexmod-serve#3"},"principal":{"kind":"peer","uid":3842}}`
 		}
+		if f.uiID != "" {
+			cs += `,{"client_id":"` + f.uiID + `","info":{"name":"rexmod","label":"rexmod-serve-ui"},"principal":{"kind":"peer","uid":3842}}`
+		}
 		return []byte(`{"clients":[` + cs + `]}`), nil
 	case rest[0] == "api" && rest[2] == "client.perform":
 		var p struct {
@@ -58,14 +64,15 @@ func (f *fakeServeHost) call(args ...string) ([]byte, error) {
 		if p.ClientID != "" && p.ClientID == f.lostID {
 			return nil, fmt.Errorf("rex: exit status 1: Error: \"rexmod-serve#9\" is waiting to reconnect (status=409 code=client_unavailable)")
 		}
-		if p.ClientID != f.serviceID || f.serviceID == "" {
+		if p.ClientID == "" || (p.ClientID != f.serviceID && p.ClientID != f.uiID) {
 			return nil, fmt.Errorf("rex: exit status 1: Error: client %s not found (status=404 code=not_found)", p.ClientID)
 		}
+		f.served = append(f.served, p.ClientID)
 		out, err := f.perform(p.Args.Argv)
 		if err != nil {
 			return nil, err
 		}
-		return []byte(`{"result":` + out + `,"performed_by":"` + f.serviceID + `"}`), nil
+		return []byte(`{"result":` + out + `,"performed_by":"` + p.ClientID + `"}`), nil
 	case rest[0] == "new":
 		f.started++
 		if f.startable {
@@ -320,5 +327,68 @@ func TestRouteRemoteViaService(t *testing.T) {
 	var st State
 	if json.Unmarshal(out[:n], &st) != nil || st.Target == nil || st.Target.Host != "gpu3" || st.Target.Repo != "/home/u/paper" {
 		t.Errorf("state: %s", out[:n])
+	}
+}
+
+// What a person starts goes to the interactive client, the panel's
+// refreshes to the main one.
+func TestRunViaServiceInteractive(t *testing.T) {
+	f := &fakeServeHost{serviceID: "client:03", uiID: "client:04", perform: func([]string) (string, error) { return reply("ok", "", 0), nil }}
+	withServeHost(t, f)
+	for _, args := range [][]string{{"state"}, {"open", "/r/a.go"}, {"comments", "send"}, {"files", "--repo", "/r"}, {"follow", "--block", "b"}} {
+		if _, err := runViaService("gpu2", args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	want := []string{"client:03", "client:04", "client:04", "client:03", "client:04"}
+	if !reflect.DeepEqual(f.served, want) {
+		t.Errorf("served by %v, want %v", f.served, want)
+	}
+	if n := f.count("client.list"); n != 1 {
+		t.Errorf("listed the clients %d times, want once", n)
+	}
+}
+
+// An older service has no interactive client: everything goes to the main
+// one, and that's remembered, not looked up on every open.
+func TestRunViaServiceNoInteractiveClient(t *testing.T) {
+	f := &fakeServeHost{serviceID: "client:03", perform: func([]string) (string, error) { return reply("ok", "", 0), nil }}
+	withServeHost(t, f)
+	for range 3 {
+		if _, err := runViaService("gpu2", []string{"open", "/r/a.go"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !reflect.DeepEqual(f.served, []string{"client:03", "client:03", "client:03"}) {
+		t.Errorf("served by %v", f.served)
+	}
+	if n := f.count("client.list"); n != 1 {
+		t.Errorf("listed the clients %d times, want once", n)
+	}
+}
+
+// The interactive client went away (the service restarted): look again,
+// and the open still goes through.
+func TestRunViaServiceInteractiveGone(t *testing.T) {
+	f := &fakeServeHost{serviceID: "client:03", uiID: "client:04", perform: func([]string) (string, error) { return reply("ok", "", 0), nil }}
+	withServeHost(t, f)
+	if _, err := runViaService("gpu2", []string{"open", "a"}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.serviceID, f.uiID = "client:07", "client:08" // restarted
+	f.mu.Unlock()
+	if out, err := runViaService("gpu2", []string{"open", "b"}); err != nil || !strings.Contains(string(out), "ok") {
+		t.Fatalf("after a restart: %s %v", out, err)
+	}
+	if last := f.served[len(f.served)-1]; last != "client:07" && last != "client:08" {
+		t.Errorf("served by %v", f.served)
+	}
+	// and the next open uses the new interactive client
+	if _, err := runViaService("gpu2", []string{"open", "c"}); err != nil {
+		t.Fatal(err)
+	}
+	if last := f.served[len(f.served)-1]; last != "client:08" {
+		t.Errorf("next open served by %s, want the new interactive client", last)
 	}
 }

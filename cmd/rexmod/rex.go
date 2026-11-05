@@ -26,6 +26,14 @@ func rexBin() string {
 }
 
 func rexRun(args ...string) ([]byte, error) {
+	if out, ok := rexViaAPI(args); ok {
+		return out, nil
+	}
+	return rexCLI(args...)
+}
+
+// rexCLI runs the rex CLI.
+func rexCLI(args ...string) ([]byte, error) {
 	cmd := exec.Command(rexBin(), args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

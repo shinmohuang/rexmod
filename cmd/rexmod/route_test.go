@@ -17,6 +17,7 @@ func TestRoutable(t *testing.T) {
 	}{
 		{"target", nil, true}, {"state", nil, true}, {"info", nil, true}, {"follow", nil, true},
 		{"files", nil, true}, {"open", nil, true}, {"pick", nil, true},
+		{"pick", []string{"--inner", "--repo", "/r"}, false}, {"pick", []string{"--here"}, false},
 		{"comments", []string{"send"}, true},
 		{"comments", []string{"add", "--file", "f"}, false}, // the editor adds them where it runs
 		{"hook", []string{"prompt"}, false}, {"editor", nil, false}, {"preview", nil, false}, {"warm", nil, false},
@@ -80,15 +81,39 @@ func TestRouteRemoteLocalSession(t *testing.T) {
 	}
 }
 
-func TestRouteRemoteEditorRefused(t *testing.T) {
+// open and pick run on the host, with the Mac's Rex theme for the editor.
+func TestRouteRemoteEditor(t *testing.T) {
 	f := gpuHosts()
 	withFakeRex(t, f)
 	fakeSSH(t)
+	home, _ := os.UserHomeDir()
+	os.MkdirAll(home+"/.config/rexmod", 0o755)
+	os.WriteFile(home+"/.config/rexmod/config.json", []byte(`{"remote_channel":"ssh"}`), 0o644)
+	old := rexThemeArg
+	rexThemeArg = func() string { return `{"appearance":"dark"}` }
+	t.Cleanup(func() { rexThemeArg = old })
 	for _, cmd := range []string{"open", "pick"} {
+		r, w, _ := os.Pipe()
+		stdout := os.Stdout
+		os.Stdout = w
 		handled, err := routeRemote(cmd, []string{"--session", "paper", "/r/a.go"})
-		if !handled || err == nil || err.Error() != "the editor isn't supported on Rex hosts yet (gpu3)" {
-			t.Errorf("%s: handled=%v err=%v", cmd, handled, err)
+		w.Close()
+		os.Stdout = stdout
+		out, _ := io.ReadAll(r)
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		want := remoteCommand("~/.local/bin/rexmod", []string{cmd, "--session", "paper", "/r/a.go", "--rex-theme", `{"appearance":"dark"}`})
+		if !handled || err != nil || lines[len(lines)-1] != want {
+			t.Errorf("%s: handled=%v err=%v ran %q", cmd, handled, err, lines[len(lines)-1])
 		}
+	}
+}
+
+func TestHasFlag(t *testing.T) {
+	if !hasFlag([]string{"--session", "s", "-inner"}, "inner") || !hasFlag([]string{"--here=true"}, "here") {
+		t.Error("flag not found")
+	}
+	if hasFlag([]string{"inner"}, "inner") || hasFlag([]string{"--", "--inner"}, "inner") || hasFlag([]string{"--innerx"}, "inner") {
+		t.Error("not a flag, found")
 	}
 }
 
@@ -117,5 +142,51 @@ func TestRouteRemoteStateUnreachable(t *testing.T) {
 	// Other commands still fail outright.
 	if _, err := routeRemote("target", []string{"--session", "paper"}); err == nil {
 		t.Error("target: want an error")
+	}
+}
+
+func TestSessionMissing(t *testing.T) {
+	stderr := "rexmod: rex api call -s paper session.view: exit status 3: Error: session target \"paper\" not found\n"
+	if !sessionMissing("paper", nil, &remoteExit{Code: 1, Stderr: stderr}) {
+		t.Error("target's error not recognised")
+	}
+	st := []byte(`{"target":null,"error":"rex api call -s paper session.view: exit status 3: Error: session target \"paper\" not found","time":"t"}`)
+	if !sessionMissing("paper", st, nil) {
+		t.Error("state's error not recognised")
+	}
+	if sessionMissing("paper", []byte(`{"target":{"repo":"/r"}}`), nil) || sessionMissing("other", st, nil) ||
+		sessionMissing("paper", nil, &remoteExit{Code: 1, Stderr: "rexmod: boom"}) {
+		t.Error("false positive")
+	}
+}
+
+// A session that moved: the remembered host says it's not there; the route
+// looks again and runs on the host that has it, once.
+func TestRouteRemoteSessionMoved(t *testing.T) {
+	f := gpuHosts()
+	withFakeRex(t, f)
+	saveSessionHosts(map[string]string{"paper": "gpu2"}) // stale: it's on gpu3
+	var ran []string
+	old := runHost
+	runHost = func(host string, args []string) ([]byte, error) {
+		ran = append(ran, host)
+		if host == "gpu2" {
+			return nil, &remoteExit{Code: 1, Stderr: "rexmod: Error: session target \"paper\" not found\n"}
+		}
+		return []byte(`{"session_id":"session:c","repo":"/r"}` + "\n"), nil
+	}
+	t.Cleanup(func() { runHost = old })
+	r, w, _ := os.Pipe()
+	stdout := os.Stdout
+	os.Stdout = w
+	handled, err := routeRemote("target", []string{"--session", "paper"})
+	w.Close()
+	os.Stdout = stdout
+	out, _ := io.ReadAll(r)
+	if !handled || err != nil || !reflect.DeepEqual(ran, []string{"gpu2", "gpu3"}) || !strings.Contains(string(out), `"host":"gpu3"`) {
+		t.Errorf("handled=%v err=%v ran=%v out=%s", handled, err, ran, out)
+	}
+	if m := loadSessionHosts(); m["paper"] != "gpu3" {
+		t.Errorf("cache: %v", m)
 	}
 }

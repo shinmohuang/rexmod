@@ -48,6 +48,17 @@ func unavailableUntil(entry string) (time.Time, bool) {
 // runRemote it returns stdout, or a *remoteExit for a command that failed
 // there; an *errUseSSH means try ssh.
 func runViaService(host string, args []string) ([]byte, error) {
+	if interactive(args) {
+		// not behind the panel's refreshes on the main client
+		if ui := uiServiceClient(host); ui != "" {
+			out, err := performRun(host, ui, args)
+			var gone *errServiceGone
+			if !errors.As(err, &gone) {
+				return out, err
+			}
+			forgetServiceClient(host) // and on to the main client, looked up afresh
+		}
+	}
 	id, err := serviceClient(host)
 	if err != nil {
 		return nil, err
@@ -135,47 +146,119 @@ func serviceClient(host string) (string, error) {
 			return id, nil
 		}
 	}
-	id, err := findService(host)
+	id, ui, err := findServices(host)
 	if err != nil {
 		return "", err
 	}
-	if id == "" {
-		if id, err = startService(host); err != nil {
-			var useSSH *errUseSSH
-			if errors.As(err, &useSSH) && strings.Contains(useSSH.Why, "didn't start") {
-				// Most likely an older rexmod there: don't try on every call.
-				m := loadServeClients()
-				m[host] = fmt.Sprintf("!%d", time.Now().Add(serveRetryAfter).Unix())
-				saveServeClients(m)
-			}
-			return "", err
+	if id != "" {
+		rememberServices(host, id, ui)
+		return id, nil
+	}
+	if id, err = startService(host); err != nil {
+		var useSSH *errUseSSH
+		if errors.As(err, &useSSH) && strings.Contains(useSSH.Why, "didn't start") {
+			// Most likely an older rexmod there: don't try on every call.
+			m := loadServeClients()
+			m[host] = fmt.Sprintf("!%d", time.Now().Add(serveRetryAfter).Unix())
+			saveServeClients(m)
 		}
+		return "", err
 	}
 	m := loadServeClients()
 	m[host] = id
+	delete(m, uiKey(host)) // started just now: its interactive client may not be up yet
 	saveServeClients(m)
 	return id, nil
 }
 
 // findService looks for a running service among host's clients, or "".
 func findService(host string) (string, error) {
+	main, _, err := findServices(host)
+	return main, err
+}
+
+// findServices finds host's service and its interactive client ("" when
+// that service has none: an older rexmod). The interactive client is the
+// first one connected after the main one (IDs sort by time); one left over
+// from an earlier service would be older.
+func findServices(host string) (main, ui string, err error) {
 	out, err := rexCall("-S", host, "--timeout", hostTimeout, "api", "call", "client.list")
 	if err != nil {
-		return "", &errUseSSH{"can't list clients on " + host + ": " + lastLine(err.Error())}
+		return "", "", &errUseSSH{"can't list clients on " + host + ": " + lastLine(err.Error())}
 	}
 	v, err := rex.DecodeJSON(out)
 	if err != nil {
-		return "", &errUseSSH{"bad client list from " + host}
+		return "", "", &errUseSSH{"bad client list from " + host}
 	}
-	best := ""
-	for _, c := range rex.ParseClients(v) {
+	cs := rex.ParseClients(v)
+	for _, c := range cs {
 		if c.Name == "rexmod" && !c.Lost && strings.HasPrefix(c.Label, serveLabel+"#") && !strings.Contains(c.Label, "#starting-") && c.Kind == "peer" {
-			if best == "" || c.ID < best {
-				best = c.ID
+			if main == "" || c.ID < main {
+				main = c.ID
 			}
 		}
 	}
-	return best, nil
+	if main == "" {
+		return "", "", nil
+	}
+	for _, c := range cs {
+		if c.Name == "rexmod" && !c.Lost && c.Label == serveUILabel && c.Kind == "peer" && c.ID > main {
+			if ui == "" || c.ID < ui {
+				ui = c.ID
+			}
+		}
+	}
+	return main, ui, nil
+}
+
+// noUIClient in the cache: the service has no interactive client.
+const noUIClient = "none"
+
+func uiKey(host string) string { return host + "#ui" }
+
+// interactive says whether a command is one a person starts, which goes to
+// the service's interactive client.
+func interactive(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "open", "pick", "follow":
+		return true
+	case "comments":
+		return len(args) > 1 && args[1] == "send"
+	}
+	return false
+}
+
+// uiServiceClient is host's interactive client, or "" to use the main one.
+// Not cached yet (a main client found before there were two), it lists the
+// clients once.
+func uiServiceClient(host string) string {
+	m := loadServeClients()
+	if id, ok := m[uiKey(host)]; ok {
+		if id == noUIClient {
+			return ""
+		}
+		return id
+	}
+	main, ui, err := findServices(host)
+	if err != nil || main == "" {
+		return ""
+	}
+	rememberServices(host, main, ui)
+	return ui
+}
+
+// rememberServices caches host's main and interactive clients.
+func rememberServices(host, main, ui string) {
+	m := loadServeClients()
+	m[host] = main
+	if ui == "" {
+		ui = noUIClient
+	}
+	m[uiKey(host)] = ui
+	saveServeClients(m)
 }
 
 // startService starts rexmod serve on host in a pane of its own (it leaves
@@ -290,6 +373,7 @@ func saveServeClients(m map[string]string) { _ = writeJSONAtomic(serveClientsPat
 func forgetServiceClient(host string) {
 	m := loadServeClients()
 	delete(m, host)
+	delete(m, uiKey(host))
 	saveServeClients(m)
 }
 

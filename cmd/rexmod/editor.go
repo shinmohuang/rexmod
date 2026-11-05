@@ -106,6 +106,36 @@ func listenArg(args []string) string {
 	return ""
 }
 
+// editorPreview is what the first pane shows while Neovim starts: the file
+// among Neovim's args (rexmod open gives --listen S [+LINE] FILE), in Rex's
+// theme. nil when there's no single file.
+func editorPreview(nvimArgs []string) *daemon.Preview {
+	p := &daemon.Preview{}
+	for i := 0; i < len(nvimArgs); i++ {
+		a := nvimArgs[i]
+		switch {
+		case a == "--listen" || a == "-u" || a == "-c" || a == "--cmd" || a == "-S" || a == "-i":
+			i++ // its value
+		case strings.HasPrefix(a, "+"):
+			if n, err := strconv.Atoi(a[1:]); err == nil {
+				p.Line = n
+			}
+		case a == "--":
+		case strings.HasPrefix(a, "-"):
+		default:
+			if p.File != "" {
+				return nil // several files: Neovim shows the first, but keep it simple
+			}
+			p.File = a
+		}
+	}
+	if p.File == "" {
+		return nil
+	}
+	p.Bg, p.Fg, p.Dim = rexThemeColors()
+	return p
+}
+
 // cmdEditorDaemon is the background half of `rexmod editor`.
 func cmdEditorDaemon(args []string) error {
 	if len(args) < 1 {
@@ -199,6 +229,7 @@ vim.cmd('qa!')`)
 		block = ""
 	}
 	d := daemon.New(selfPath(), sock, []string{"editor-pane"}, nc, rex.NewSession(rc, sessionID))
+	d.Preview = editorPreview(nvimArgs)
 	why, err := d.Run(launch, block, l, sigs)
 	if err != nil {
 		return err

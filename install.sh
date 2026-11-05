@@ -139,11 +139,12 @@ open(path, "w").write(text)
 EOF
 HAS_PANE_KEYS=0
 grep -q "focus_direction" "$REXCFG" && HAS_PANE_KEYS=1
-if ! grep -q '"pick", "--here"' "$REXCFG"; then
+if ! grep -q 'pick.*--here' "$REXCFG"; then
   {
     printf '\n%s\n' "$BEGIN"
     cat <<EOF
--- Cmd+P: fuzzy file picker over the repo this tab's Claude works in.
+-- Cmd+P: fuzzy file picker over the repo this tab's Claude works in. The layer runs where the
+-- session is: on a remote Rex host, rexmod is ~/.local/bin/rexmod (scripts/install-remote.sh).
 rex.bind("cmd+p", function(ctx)
   rex.call("session.new_layer", {
     session_id = ctx.session_id,
@@ -151,7 +152,8 @@ rex.bind("cmd+p", function(ctx)
     focus = true,
     layout = { block = { flavor = "com.superlogical.terminal.shell", label = "files", options = {
       shell = "none",
-      command = { "$PREFIX/bin/rexmod", "pick", "--here", "--session", ctx.session_id },
+      command = { "/bin/sh", "-c", 'r="\$1"; [ -x "\$r" ] || r="\$HOME/.local/bin/rexmod"; exec "\$r" pick --here --session "\$2"',
+        "sh", "$PREFIX/bin/rexmod", ctx.session_id },
     } } },
   })
   return true

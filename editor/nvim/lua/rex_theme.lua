@@ -2,7 +2,33 @@
 -- Rex does not answer the OSC 4 and OSC 11 color queries with its theme, so read its settings instead:
 -- the theme IDs come from the app's defaults, the colors from the themes.json in the app bundle.
 -- An imported theme is not in themes.json. Its colors sit in the defaults key Workspace.customThemes.
+-- On a remote Rex host there are no such settings: the Mac's rexmod hands the theme over with
+-- `rexmod open`, which keeps it in the file $REXMOD_REX_THEME (or ~/.cache/rexmod/rex-theme.json).
 local M = {}
+
+local function snapshot_path()
+  if vim.env.REXMOD_REX_THEME and vim.env.REXMOD_REX_THEME ~= "" then
+    return vim.env.REXMOD_REX_THEME
+  end
+  local cache = vim.env.XDG_CACHE_HOME
+  if not cache or cache == "" then
+    cache = vim.env.HOME .. "/.cache"
+  end
+  return cache .. "/rexmod/rex-theme.json"
+end
+
+-- The theme the Mac handed over, or nil when this is the Mac (or nothing was handed over).
+local function read_snapshot()
+  if vim.fn.has("mac") == 1 then
+    return nil
+  end
+  local ok, lines = pcall(vim.fn.readfile, snapshot_path())
+  if not ok then
+    return nil
+  end
+  local decoded, snap = pcall(vim.json.decode, table.concat(lines, "\n"))
+  return decoded and type(snap) == "table" and snap or nil
+end
 
 local THEMES_GLOB =
   "/Applications/Rex*.app/Contents/Resources/SuperUI_SuperDesignTokens.bundle/Contents/Resources/themes.json"
@@ -84,11 +110,27 @@ end
 
 -- Returns "system", "dark" or "light": the appearance setting of Rex.
 function M.appearance()
+  local snap = read_snapshot()
+  if snap then
+    return snap.appearance or "dark"
+  end
+  if vim.fn.has("mac") == 0 then
+    return "dark"
+  end
   return read_settings().appearance
 end
 
 -- Returns the Rex theme for a background. Its source holds background, foreground, ansi[1..16] and more.
 function M.theme(background)
+  if vim.fn.has("mac") == 0 then
+    local snap = read_snapshot()
+    local theme = snap and (snap[background] or snap.dark or snap.light)
+    if not theme then
+      error("rex: no Rex theme from the Mac yet (" .. snapshot_path() .. ")")
+    end
+    return theme
+  end
+
   local id = read_settings()[background]
 
   for _, theme in ipairs(read_themes()) do

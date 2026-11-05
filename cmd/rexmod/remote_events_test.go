@@ -12,6 +12,7 @@ func TestServiceChanged(t *testing.T) {
 		{`{"type":"client_changed","payload":{"client":{"info":{"name":"Rex Beta","label":"Mac mini"}}}}`, false},
 		{`{"type":"client_changed","payload":{"client":{"info":{"name":"rex","label":"rexmod-serve#1"}}}}`, false}, // not the service
 		{`{"type":"client_joined","payload":{"client":{"info":{"name":"rexmod","label":"rexmod-serve#0"}}}}`, false},
+		{`{"type":"client_changed","payload":{"client":{"info":{"name":"rexmod","label":"rexmod-serve-ui"}}}}`, false}, // the interactive client
 		{`{"type":"session_created"}`, false},
 		{`not json`, false},
 	} {
