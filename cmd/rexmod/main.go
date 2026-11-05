@@ -21,7 +21,7 @@ const usage = `rexmod: Rex Changes panel, editor and review helpers
   rexmod state    [--session S] [--window W]           target + all change sets (JSON, for the panel)
   rexmod info     [--session S] [--window W]           agent status, session, plan usage, processes, ports (JSON)
   rexmod changes  [--repo R] [--mode M]                M = last-turn | uncommitted | branch (JSON)
-  rexmod files    [--repo R] [--changed]               files of the repo, one per line
+  rexmod files    [--repo R] [--changed] [--host H]    files of the repo, one per line (H: a Rex host)
   rexmod open     [--session S] [--window W] FILE[:LINE]  open in the editor pane
   rexmod pick     [--session S] [--window W]           fuzzy file picker in a floating layer
   rexmod preview  FILE [LINE]                          numbered preview (used by the picker)
@@ -35,12 +35,23 @@ const usage = `rexmod: Rex Changes panel, editor and review helpers
   rexmod follow   --session S --window W --block B     follow (and focus) another agent pane of the window
   rexmod hook prompt|stop [--text]                     agent turn hooks (JSON on stdin; --text: plain comments out)
   rexmod warm                                          cache the login environment for the editor pane
+
+A session on another Rex host (rex hosts) runs there over ssh: target, state, info, files, follow
+and comments send; see remote_hosts in ~/.config/rexmod/config.json.
 `
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if handled, err := routeRemote(os.Args[1], os.Args[2:]); handled {
+		if err != nil {
+			exitRemote(err)
+			fmt.Fprintln(os.Stderr, "rexmod:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	var err error
 	switch os.Args[1] {
