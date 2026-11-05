@@ -1,3 +1,5 @@
+//go:build darwin
+
 package main
 
 // The editor: one headless Neovim behind Rex panes, each Neovim window in
