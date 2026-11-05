@@ -129,29 +129,37 @@ the panel becomes a menu to switch, and the *Info* tab lists them all.
 ### Remote hosts
 
 A session on another machine's Rex server (`rex hosts`, reached over Tailscale) works too: the
-panel finds which host the session is on and runs `rexmod` there over ssh, so git and the agent's
-hooks run where the repository is. Rex's API can't run a command and return its output, hence ssh.
+panel finds which host the session is on and runs `rexmod` there, so git and the agent's hooks run
+where the repository is. It does that through Rex itself: on the host, `rexmod serve` stays running
+as a Rex client and answers the Mac's requests (`client.perform`), and it tells the panel the moment
+a repository it was asked about changes, so the panel refreshes then instead of polling.
 
-The host needs `rexmod`, `git` and Rex's `rex` CLI, and an ssh login that doesn't prompt (a key).
-Until there's an installer, build and copy `rexmod` yourself:
+The host needs `rexmod`, `git` and Rex's `rex` CLI. Until there's an installer, build and copy
+`rexmod` yourself:
 
 ```sh
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/rexmod-linux-amd64 ./cmd/rexmod
 scp build/rexmod-linux-amd64 my-gpu-box:.local/bin/rexmod
 ```
 
-Then say which ssh destination each Rex host is, in `~/.config/rexmod/config.json` (a host without
-an entry is reached at its label; `rexmod` defaults to `~/.local/bin/rexmod` there):
+That's all: the first time the panel follows a session there, rexmod starts `rexmod serve` through
+Rex, in a session called `rexmod` that has no window. Copy a new `rexmod` over it and the running
+service exits within seconds; the next request starts the new one. The service runs only the
+commands the panel needs (`target`, `state`, `info`, `files`, `follow`, `comments send`), for
+whoever the host's Rex server lets in, which by default is only you.
+
+If the service can't be used (an older `rexmod` there, a result over Rex's 1 MB message limit, Rex
+trouble), rexmod falls back to ssh, which needs a login that doesn't prompt (a key). Say which ssh
+destination each Rex host is in `~/.config/rexmod/config.json` (a host without an entry is reached at
+its label; `rexmod` defaults to `~/.local/bin/rexmod` there). `"remote_channel": "ssh"` skips Rex
+and always uses ssh, for troubleshooting:
 
 ```json
-{ "remote_hosts": { "gpu2": { "ssh": "my-gpu-box" } } }
+{ "remote_hosts": { "gpu2": { "ssh": "my-gpu-box" } }, "remote_channel": "ssh" }
 ```
 
-rexmod shares one ssh connection per host (`ControlMaster`). A refresh still starts a shell on the
-host, so a slow `~/.bashrc` (such as conda's hook) slows each one: return early in it for
-non-interactive shells. For now the panel polls remote sessions every few seconds while it's shown;
-the editor and `⌘P` aren't supported there; Last Turn needs `rexmod hook prompt` / `stop` in the
-host's agent hooks.
+The editor and `⌘P` aren't supported on remote hosts yet; Last Turn needs `rexmod hook prompt` /
+`stop` in the host's agent hooks.
 
 ## How it works
 

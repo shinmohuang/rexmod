@@ -86,6 +86,8 @@ func main() {
 		err = cmdEditorDaemon(os.Args[2:])
 	case "serve":
 		err = cmdServe(os.Args[2:])
+	case "remote-events":
+		err = cmdRemoteEvents(os.Args[2:])
 	case "warm":
 		// Refresh the cached login environment if it is stale.
 		_ = loginEnv()
