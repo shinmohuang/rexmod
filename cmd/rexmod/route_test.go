@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"io"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -86,5 +89,33 @@ func TestRouteRemoteEditorRefused(t *testing.T) {
 		if !handled || err == nil || err.Error() != "the editor isn't supported on Rex hosts yet (gpu3)" {
 			t.Errorf("%s: handled=%v err=%v", cmd, handled, err)
 		}
+	}
+}
+
+// A host that can't be reached is the state's error, as for a local session
+// the panel can't follow, so the panel shows why.
+func TestRouteRemoteStateUnreachable(t *testing.T) {
+	f := gpuHosts()
+	withFakeRex(t, f)
+	fakeSSH(t)
+	t.Setenv("FAKE_SSH_EXIT", "255")
+	t.Setenv("FAKE_SSH_STDERR", "Permission denied (publickey,password).")
+	r, w, _ := os.Pipe()
+	stdout := os.Stdout
+	os.Stdout = w
+	handled, err := routeRemote("state", []string{"--session", "paper"})
+	w.Close()
+	os.Stdout = stdout
+	out, _ := io.ReadAll(r)
+	if !handled || err != nil {
+		t.Fatalf("handled=%v err=%v", handled, err)
+	}
+	var st State
+	if json.Unmarshal(out, &st) != nil || !strings.Contains(st.Error, "can't reach Rex host gpu3") || st.Target != nil {
+		t.Errorf("state: %s", out)
+	}
+	// Other commands still fail outright.
+	if _, err := routeRemote("target", []string{"--session", "paper"}); err == nil {
+		t.Error("target: want an error")
 	}
 }

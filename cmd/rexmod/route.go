@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // routeRemote runs a command on the Rex host its session lives on. It
@@ -34,6 +35,12 @@ func routeRemote(cmd string, args []string) (handled bool, err error) {
 		return true, fmt.Errorf("the editor isn't supported on Rex hosts yet (%s)", host)
 	}
 	out, err := runRemote(host, append([]string{cmd}, args...))
+	var re *remoteExit
+	if err != nil && cmd == "state" && !errors.As(err, &re) {
+		// As for a local session the panel can't follow: the reason goes in
+		// the state, so the panel shows it instead of keeping stale changes.
+		return true, printJSON(State{Error: err.Error(), Time: time.Now().Format(time.RFC3339)})
+	}
 	if err != nil {
 		return true, err
 	}
