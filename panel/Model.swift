@@ -19,6 +19,7 @@ struct TargetDTO: Decodable, Equatable {
     var repoName: String?
     var branch: String?
     var gitDir: String?
+    var host: String?               // the Rex host the session lives on; nil here
 }
 
 struct AgentPaneDTO: Decodable, Equatable, Identifiable {
@@ -292,6 +293,8 @@ final class PanelModel: ObservableObject {
     private var lastTargetJSON: Data?
     private var watcher: FSWatcher?
     private var watchedRepo: String?
+    /// A remote repository has no file events here: poll it instead.
+    private var pollTimer: Timer?
     private var timers: [Timer] = []
     private var inflight = false
     private var pending = false
@@ -313,6 +316,9 @@ final class PanelModel: ObservableObject {
         // Tabs, focus and new agent panes change without file events.
         timers.append(Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self, NSApp.isActive, self.isVisible() else { return }
+            // A remote target costs an ssh round trip: not while the panel is
+            // hidden. Showing it refreshes anyway.
+            if self.target?.host != nil && !self.panelVisible { return }
             self.checkTarget()
         })
         // Processes come and go and the agent changes state without a file
@@ -398,7 +404,9 @@ final class PanelModel: ObservableObject {
     func refreshFiles() {
         guard let repo = target?.repo, !filesInflight else { return }
         filesInflight = true
-        Shell.rexmod(["files", "--repo", repo]) { [weak self] status, out, _ in
+        var args = ["files", "--repo", repo]
+        if let host = target?.host { args += ["--host", host] }
+        Shell.rexmod(args) { [weak self] status, out, _ in
             guard let self = self else { return }
             self.filesInflight = false
             guard status == 0, let s = String(data: out, encoding: .utf8) else { return }
@@ -408,14 +416,30 @@ final class PanelModel: ObservableObject {
     }
 
     private func updateWatcher() {
-        let repo = target?.repo
-        guard repo != watchedRepo else { return }
-        watchedRepo = repo
+        // The same path on two machines is two repositories.
+        let host = target?.host
+        let key = target?.repo.map { (host.map { $0 + ":" } ?? "") + $0 }
+        guard key != watchedRepo else { return }
+        watchedRepo = key
         watcher = nil
+        if pollTimer != nil { RM.log("polling stopped") }
+        pollTimer?.invalidate()
+        pollTimer = nil
         files = []
         collapsed = []
         expandedFiles = []
-        guard let repo = repo else { return }
+        guard key != nil, let path = target?.repo else { return }
+        if let host = host {
+            RM.log("polling \(path) on Rex host \(host)")
+            pollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+                guard let self = self, self.panelVisible, self.isVisible() else { return }
+                self.refresh(reason: "poll")
+                if self.tab == .files { self.refreshFiles() }
+            }
+            if tab == .files { refreshFiles() }
+            return
+        }
+        let repo = path
         var paths = [repo]
         if let gd = target?.gitDir, !gd.hasPrefix(repo + "/") { paths.append(gd) }
         watcher = FSWatcher(paths: paths) { [weak self] changed in

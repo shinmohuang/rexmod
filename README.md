@@ -126,6 +126,33 @@ next message you type to the agent, as a short list of `file:line`, the code, an
 focused last; working in the editor or a shell doesn't change that. The agent name at the bottom of
 the panel becomes a menu to switch, and the *Info* tab lists them all.
 
+### Remote hosts
+
+A session on another machine's Rex server (`rex hosts`, reached over Tailscale) works too: the
+panel finds which host the session is on and runs `rexmod` there over ssh, so git and the agent's
+hooks run where the repository is. Rex's API can't run a command and return its output, hence ssh.
+
+The host needs `rexmod`, `git` and Rex's `rex` CLI, and an ssh login that doesn't prompt (a key).
+Until there's an installer, build and copy `rexmod` yourself:
+
+```sh
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/rexmod-linux-amd64 ./cmd/rexmod
+scp build/rexmod-linux-amd64 my-gpu-box:.local/bin/rexmod
+```
+
+Then say which ssh destination each Rex host is, in `~/.config/rexmod/config.json` (a host without
+an entry is reached at its label; `rexmod` defaults to `~/.local/bin/rexmod` there):
+
+```json
+{ "remote_hosts": { "gpu2": { "ssh": "my-gpu-box" } } }
+```
+
+rexmod shares one ssh connection per host (`ControlMaster`). A refresh still starts a shell on the
+host, so a slow `~/.bashrc` (such as conda's hook) slows each one: return early in it for
+non-interactive shells. For now the panel polls remote sessions every few seconds while it's shown;
+the editor and `⌘P` aren't supported there; Last Turn needs `rexmod hook prompt` / `stop` in the
+host's agent hooks.
+
 ## How it works
 
 ```mermaid
