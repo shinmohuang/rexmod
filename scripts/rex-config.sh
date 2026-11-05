@@ -45,10 +45,14 @@ grep -q "focus_direction" "$REXCFG" && HAS_PANE_KEYS=1
 
 # BIN as a Lua string
 LUA_BIN="$(printf '%s' "$BIN" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+# a blank line before the block, unless the config ends with one (or is empty)
+SEP=""
+if [ -s "$REXCFG" ] && [ -n "$(tail -n 1 "$REXCFG")" ]; then
+  SEP="
+"
+fi
 {
-  if [ -s "$REXCFG" ] && [ -n "$(tail -n 1 "$REXCFG")" ]; then
-    echo
-  fi
+  printf '%s' "$SEP"
   printf '%s\n' "$BEGIN"
   cat <<EOF
 -- Cmd+P: fuzzy file picker over the repo this tab's agent works in. rexmod runs as it is, with
