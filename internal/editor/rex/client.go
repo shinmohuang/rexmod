@@ -231,6 +231,10 @@ func marshal(v any) ([]byte, error) {
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
+// DecodeJSON decodes a JSON value the way messages are: numbers stay
+// json.Number, for Get, Str and Int.
+func DecodeJSON(b []byte) (any, error) { return decode(b) }
+
 func decode(b []byte) (any, error) {
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.UseNumber()
